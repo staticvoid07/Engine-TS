@@ -151,7 +151,7 @@ export default class ObjType extends ConfigType {
     yof2d = 0;
     code9 = false;
     code10 = -1;
-    stackable = false;
+    stackable = true;
     cost = 1;
     members = false;
     op: (string | null)[] | null = null;

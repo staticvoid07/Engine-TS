@@ -903,6 +903,7 @@ class World {
 
                 if (player instanceof NetworkPlayer) {
                     player.addSessionLog(LoggerEventType.ENGINE, 'Tried to log in - already logged in');
+                    this.removePlayer(player);
                     player.client.send(Uint8Array.from([5]));
                     player.client.close();
                 }

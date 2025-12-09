@@ -554,7 +554,7 @@ const InvOps: CommandHandlers = {
 
         const player: Player = state.activePlayer;
         // prevent reduction in store stocks when players buy items
-        const completed = fromInvType.restock ? count : player.invDel(fromInvType.id, objType.id, count);
+        const completed = player.invDel(fromInvType.id, objType.id, count);
         if (completed == 0) {
             return;
         }
@@ -589,7 +589,9 @@ const InvOps: CommandHandlers = {
         }
 
         const player: Player = state.activePlayer;
-        const completed = player.invDel(fromInvType.id, objType.id, count);
+        // prevent reduction in store stocks when players buy items
+        //const completed = player.invDel(fromInvType.id, objType.id, count);
+        const completed = fromInvType.restock ? count : player.invDel(fromInvType.id, objType.id, count);
         if (completed == 0) {
             return;
         }

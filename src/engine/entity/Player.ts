@@ -488,7 +488,6 @@ export default class Player extends PathingEntity {
         // - runenergy
         // - reset anims
         // - social
-        console.log('logged in.');
         console.trace();
 
         this.buildArea.rebuildNormal();
@@ -551,7 +550,6 @@ export default class Player extends PathingEntity {
             const ticksBeforeShutdown = World.shutdownTicksRemaining;
             this.write(new UpdateRebootTimer(ticksBeforeShutdown));
         }
-        console.log('reconnected.');
         //this.closeModal();
         this.closeModal(false);
         // tabs could have been updated while reconnecting, make sure we sync them now
@@ -752,8 +750,6 @@ export default class Player extends PathingEntity {
 
     closeModal(clearWeakQueue: boolean = true) {
         if (clearWeakQueue) {
-            console.log('weakqueue clear');
-            console.trace();
             this.weakQueue.clear();
         }
         if (!this.delayed) {

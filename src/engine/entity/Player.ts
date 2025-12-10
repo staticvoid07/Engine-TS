@@ -488,6 +488,7 @@ export default class Player extends PathingEntity {
         // - runenergy
         // - reset anims
         // - social
+        console.log('logged in.'); 
 
         this.buildArea.rebuildNormal();
         this.write(new ChatFilterSettings(this.publicChat, this.privateChat, this.tradeDuel));
@@ -549,7 +550,9 @@ export default class Player extends PathingEntity {
             const ticksBeforeShutdown = World.shutdownTicksRemaining;
             this.write(new UpdateRebootTimer(ticksBeforeShutdown));
         }
-        this.closeModal();
+        console.log('reconnected.');
+        //this.closeModal();
+        this.closeModal(false);
         // tabs could have been updated while reconnecting, make sure we sync them now
         for (let i = 0; i < this.tabs.length; i++) {
             this.write(new IfSetTab(this.tabs[i], i));

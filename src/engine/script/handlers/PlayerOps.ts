@@ -584,7 +584,11 @@ const PlayerOps: CommandHandlers = {
     [ScriptOpcode.STAT_RANDOM]: checkedHandler(ActivePlayer, state => {
         const [stat, low, high] = state.popInts(3);
 
-        const level = state.activePlayer.levels[stat];
+        let level = state.activePlayer.levels[stat];
+        if (stat === PlayerStat.THIEVING) {
+            level += 25;
+        }
+
         const value = Math.floor((low * (99 - level)) / 98) + Math.floor((high * (level - 1)) / 98) + 1;
         const chance = Math.floor(Math.random() * 256);
 

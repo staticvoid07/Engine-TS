@@ -748,6 +748,8 @@ export default class Player extends PathingEntity {
 
     closeModal(clearWeakQueue: boolean = true) {
         if (clearWeakQueue) {
+            console.log('weakqueue clear');
+            console.trace();
             this.weakQueue.clear();
         }
         if (!this.delayed) {

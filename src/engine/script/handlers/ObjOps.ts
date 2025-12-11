@@ -63,6 +63,12 @@ const ObjOps: CommandHandlers = {
             return;
         }
 
+        const activeNpc = state.activeNpc;
+        if (activeNpc) {
+            player.invAdd(InvType.INV, objId, count);
+            return;
+        }
+
         if (!objType.stackable || count === 1) {
             for (let i = 0; i < count; i++) {
                 const obj: Obj = new Obj(position.level, position.x, position.z, EntityLifeCycle.DESPAWN, objId, 1);

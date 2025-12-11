@@ -5,6 +5,8 @@ import ParamType from '#/cache/config/ParamType.js';
 import { CoordGrid } from '#/engine/CoordGrid.js';
 import { EntityLifeCycle } from '#/engine/entity/EntityLifeCycle.js';
 import Obj from '#/engine/entity/Obj.js';
+import Player from '#/engine/entity/Player.js';
+import { PlayerStat } from '#/engine/entity/PlayerStat.js';
 import { ObjIterator } from '#/engine/script/ScriptIterators.js';
 import { ScriptOpcode } from '#/engine/script/ScriptOpcode.js';
 import { ActiveObj, ActivePlayer } from '#/engine/script/ScriptPointer.js';
@@ -28,6 +30,30 @@ const ObjOps: CommandHandlers = {
         check(duration, DurationValid);
         const position: CoordGrid = check(coord, CoordValid);
         check(count, ObjStackValid);
+
+        const player: Player = state.activePlayer;
+
+        // --- Bone Dissolver Logic Start ---
+        const bones = ['bones', 'bones_burnt', 'bat_bones', 'big_bones', 'babydragon_bones', 'dragon_bones', 'wolf_bones'];
+        if (bones.includes(objType.debugname ?? '') && state.activePlayer) {
+            const incineratorRingId = 713;
+            const ringSlotId = ObjType.getWearPosId('ring');
+
+            const equippedItem = player.invGetSlot(InvType.WORN, ringSlotId);
+            const hasDissolverEquipped = equippedItem?.id === incineratorRingId;
+            const hasDissolverInventory = player.invTotal(InvType.INV, incineratorRingId) > 0;
+
+            if (hasDissolverEquipped || hasDissolverInventory) {
+                // Assume the first and only param is the XP value
+                const boneXp = Array.from(objType.params.values())[0];
+                if (typeof boneXp !== 'number') {
+                    throw new Error(`Bone XP is not a number for ${objType.debugname}`);
+                }
+                player.addXp(PlayerStat.PRAYER, boneXp);
+                return;
+            }
+        }
+        // --- Bone Dissolver Logic End ---
 
         if (objType.dummyitem !== 0) {
             throw new Error(`attempted to add dummy item: ${objType.debugname}`);

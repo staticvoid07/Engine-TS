@@ -488,8 +488,6 @@ export default class Player extends PathingEntity {
         // - runenergy
         // - reset anims
         // - social
-        console.trace();
-
         this.buildArea.rebuildNormal();
         this.write(new ChatFilterSettings(this.publicChat, this.privateChat, this.tradeDuel));
 

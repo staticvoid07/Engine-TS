@@ -2158,7 +2158,7 @@ export default class Player extends PathingEntity {
     }
 
     executeScript(script: ScriptState, protect: boolean = false, force: boolean = false) {
-        console.log('Executing', script.script.name);
+        // printDebug('Executing', script.script.name);
 
         const state = this.runScript(script, protect, force);
         if (state === -1) {

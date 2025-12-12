@@ -748,8 +748,8 @@ export default class Player extends PathingEntity {
 
     closeModal(clearWeakQueue: boolean = true) {
         if (clearWeakQueue) {
-            console.log('weakqueue clear');
-            console.trace();
+            // console.log('weakqueue clear');
+            // console.trace();
             this.weakQueue.clear();
         }
         if (!this.delayed) {
@@ -2158,11 +2158,11 @@ export default class Player extends PathingEntity {
     }
 
     executeScript(script: ScriptState, protect: boolean = false, force: boolean = false) {
-        // printDebug('Executing', script.script.name);
+        console.log('Executing', script.script.name);
 
         const state = this.runScript(script, protect, force);
         if (state === -1) {
-            // printDebug('Script did not run', script.script.name, protect, this.protect);
+            console.log('Script did not run', script.script.name, protect, this.protect);
             return;
         }
 

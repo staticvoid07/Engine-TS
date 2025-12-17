@@ -28,6 +28,7 @@ PreloadedDirs.ts
 *.bz2
 
 db.sqlite
+db_old.sqlite
 db.sqlite-journal
 
 # coverage reports
@@ -49,3 +50,5 @@ Thumbs.db
 ### macOS ###
 .DS_Store
 ._*
+public/client/client.js
+client-0.0.5.jar

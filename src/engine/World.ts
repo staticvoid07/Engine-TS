@@ -2254,15 +2254,17 @@ class World {
     }
 
     addSessionLog(event_type: LoggerEventType, account_id: number, session_uuid: string, coord: number, message: string, ...args: string[]) {
-        this.sessionLogs.push({
-            account_id,
-            session_uuid,
-            timestamp: Date.now(),
-            coord,
-            event: args.length ? message + ' ' + args.join(' ') : message,
-            event_type
-        });
-        trackSessionEventsPublished.inc();
+        if (event_type == LoggerEventType.ADVENTURE) {
+            this.sessionLogs.push({
+                account_id,
+                session_uuid,
+                timestamp: Date.now(),
+                coord,
+                event: args.length ? message + ' ' + args.join(' ') : message,
+                event_type
+            });
+            trackSessionEventsPublished.inc();
+        }
     }
 
     addWealthEvent(event: WealthEvent) {

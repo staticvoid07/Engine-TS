@@ -63,8 +63,7 @@ const ObjOps: CommandHandlers = {
             return;
         }
 
-        const activeNpc = state.activeNpc;
-        if (activeNpc) {
+        if (state._activeNpc != null) {
             const overflow = count - player.invAdd(InvType.INV, objId, count, false);
             if (overflow === 0) {
                 return;

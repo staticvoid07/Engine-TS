@@ -329,7 +329,6 @@ export default class Player extends PathingEntity {
     moveClickRequest: boolean = false;
 
     requestLogout: boolean = false;
-    requestIdleLogout: boolean = false;
     loggingOut: boolean = false;
     preventLogoutMessage: string | null = null;
     preventLogoutUntil: number = -1;
@@ -823,6 +822,24 @@ export default class Player extends PathingEntity {
         } else {
             return !this.protect && !this.busy();
         }
+    }
+
+    // true if the player isn't mid-combat/protected-script/engine-queued/an undiscardable long queue entry,
+    // i.e. it's safe to end this session (real logout, or a forced logout ahead of a login takeover) right now
+    readyToLogout(): boolean {
+        if (!this.canAccess() || this.engineQueue.head() !== null) {
+            return false;
+        }
+
+        for (let request = this.queue.head(); request !== null; request = this.queue.next()) {
+            if (request.type === PlayerQueueType.LONG && request.args[0] === 1) {
+                // ^discard
+                continue;
+            }
+            return false;
+        }
+
+        return true;
     }
 
     /**

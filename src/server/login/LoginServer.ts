@@ -165,7 +165,7 @@ export default class LoginServer {
                             .where('profile', '=', profile)
                             .execute();
                     } else if (type === 'player_login') {
-                        const { nodeMembers, replyTo, username, password, uid, socket, remoteAddress, reconnecting, hasSave } = msg;
+                        const { nodeMembers, replyTo, username, password, uid, socket, remoteAddress, hasSave } = msg;
                         const safeName = toSafeName(username);
                         
                         if (this.loginRequests.has(safeName)) {
@@ -301,7 +301,7 @@ export default class LoginServer {
                                 }
                             }
 
-                            if (reconnecting && account.logged_in === nodeId) {
+                            if (account.logged_in === nodeId) {
                                 await db
                                     .insertInto('session')
                                     .values({
@@ -350,7 +350,7 @@ export default class LoginServer {
                                     );
                                 }
                                 return;
-                            } else if (account.logged_in !== null && account.logged_in !== 0) {
+                            } else if (account.logged_in !== null && account.logged_in !== 0 && account.logged_in !== nodeId) {
                                 // already logged in elsewhere
                                 s.send(
                                     JSON.stringify({

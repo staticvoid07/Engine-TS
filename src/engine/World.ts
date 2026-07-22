@@ -46,7 +46,7 @@ import { NpcStat } from '#/engine/entity/NpcStat.js';
 import Obj from '#/engine/entity/Obj.js';
 import Player from '#/engine/entity/Player.js';
 import { PlayerLoading } from '#/engine/entity/PlayerLoading.js';
-import { EntityQueueState, PlayerQueueType } from '#/engine/entity/PlayerQueueRequest.js';
+import { EntityQueueState } from '#/engine/entity/PlayerQueueRequest.js';
 import { PlayerStat } from '#/engine/entity/PlayerStat.js';
 import { SessionLog } from '#/engine/entity/tracking/SessionLog.js';
 import { WealthTransactionEvent, WealthEvent } from '#/engine/entity/tracking/WealthEvent.js';
@@ -125,8 +125,7 @@ class World {
     private static readonly PLAYER_SAVERATE: number = 1500; // 15m
     private static readonly PLAYER_COORDLOGRATE: number = 50; // 30s
 
-    private static readonly TIMEOUT_NO_CONNECTION: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 50; // 30s with no connection (16 ticks in osrs)
-    private static readonly TIMEOUT_NO_RESPONSE: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 100; // 60s without any response
+    private static readonly TIMEOUT_CLIENTLESS: number = Math.round((Environment.NODE_CLIENTLESS_TIMEOUT * 60000) / World.TICKRATE); // configurable, default 24h with no connection
 
     // the game/zones map
     readonly gameMap: GameMap;
@@ -783,42 +782,33 @@ class World {
 
         for (const player of this.players) {
             let force = false;
-            if (this.shutdown || this.currentTick - player.lastResponse >= World.TIMEOUT_NO_RESPONSE) {
-                // world shutdown or x-logged / timed out for 60s: force logout
+            if (this.shutdown) {
+                // world shutdown: force logout
                 player.loggingOut = true;
                 force = true;
-            } else if (this.currentTick - player.lastConnected >= World.TIMEOUT_NO_CONNECTION) {
-                // connection lost for 30s: request idle logout
-                player.requestIdleLogout = true;
+            } else if (this.currentTick - player.lastConnected >= World.TIMEOUT_CLIENTLESS) {
+                // no client attached for the configured timeout straight: force an immediate, unconditional logout.
+                // this is an idle game - a long-running/looping script must never permanently lock a player out
+                // of their own account by keeping readyToLogout() false forever.
+                player.addSessionLog(LoggerEventType.MODERATOR, 'Force logged out after being clientless for too long');
+                this.removePlayer(player);
+                continue;
             }
 
-            if (player.requestLogout || player.requestIdleLogout) {
+            if (player.requestLogout) {
                 if (this.currentTick >= player.preventLogoutUntil) {
                     player.loggingOut = true;
-                } else if (player.requestLogout && player.preventLogoutMessage !== null) {
+                } else if (player.preventLogoutMessage !== null) {
                     player.messageGame(player.preventLogoutMessage); // engine message type in osrs
                     player.preventLogoutMessage = null;
                 }
                 player.requestLogout = false;
-                player.requestIdleLogout = false;
             }
 
             if (player.loggingOut && (force || this.currentTick >= player.preventLogoutUntil)) {
                 player.closeModal();
 
-                let queueDiscardable = true;
-                for (let request = player.queue.head(); request !== null; request = player.queue.next()) {
-                    if (request.type === PlayerQueueType.LONG) {
-                        const logoutAction = request.args[0];
-                        if (logoutAction === 1) {
-                            // ^discard
-                            continue;
-                        }
-                    }
-                    queueDiscardable = false;
-                    break;
-                }
-                if (player.canAccess() && player.engineQueue.head() === null && queueDiscardable) {
+                if (player.readyToLogout()) {
                     const script = ScriptProvider.getByTriggerSpecific(ServerTriggerType.LOGOUT, -1, -1);
                     if (!script) {
                         printError('LOGOUT TRIGGER IS BROKEN!');
@@ -863,50 +853,57 @@ class World {
                 continue;
             }
 
-            // reconnect a new socket with player in the world
-            if (player.reconnecting) {
-                for (const other of this.players) {
-                    if (player.username !== other.username) {
-                        continue;
-                    }
-
-                    if (isClientConnected(other)) {
-                        player.addSessionLog(LoggerEventType.MODERATOR, 'Logged to world ' + Environment.NODE_ID + ' replacing session', other.client.uuid);
-                        other.client.close();
-                    }
-
-                    if (other instanceof NetworkPlayer && player instanceof NetworkPlayer) {
-                        other.client = player.client;
-                        other.client.send(Uint8Array.from([15]));
-                    }
-
-                    rsbuf.cleanupPlayerBuildArea(other.pid);
-
-                    other.onReconnect();
-
-                    this.friendThread.postMessage({
-                        type: 'player_login',
-                        username: other.username,
-                        chatModePrivate: other.privateChat,
-                        staffLvl: other.staffModLevel
-                    });
-
-                    continue player;
-                }
-            }
-
-            // player already logged in
+            // a login for a username already active in this world always wins over the existing session: a
+            // genuine same-client reconnect resumes in place, anything else forces a real logout first (below)
             for (const other of this.players) {
                 if (player.username !== other.username) {
                     continue;
                 }
 
-                if (player instanceof NetworkPlayer) {
-                    player.addSessionLog(LoggerEventType.ENGINE, 'Tried to log in - already logged in');
-                    this.removePlayer(player);
-                    player.client.send(Uint8Array.from([5]));
-                    player.client.close();
+                if (!player.reconnecting || !other.readyToLogout()) {
+                    // either a different client is taking over (not this same client process resuming its own
+                    // drop), or the old session is mid-combat/protected-script/long-queued action - either way,
+                    // don't hand off a live socket. Force an immediate, unconditional logout of the old session
+                    // (this is an idle game - a stuck/looping script must never block someone from logging back
+                    // into their own account) and have the new client retry once that completes with a normal
+                    // fresh login, rather than trying to live-swap state into a client that may not match it.
+                    other.addSessionLog(LoggerEventType.MODERATOR, 'Forcing logout to allow login elsewhere');
+                    this.removePlayer(other);
+
+                    if (player instanceof NetworkPlayer) {
+                        player.addSessionLog(LoggerEventType.ENGINE, 'Tried to log in - other session still active, forcing it to log out first');
+                        this.removePlayer(player);
+                        player.client.send(Uint8Array.from([5]));
+                        player.client.close();
+                    }
+
+                    continue player;
                 }
+
+                // this exact client process dropped and is reconnecting on its own - resume in place without
+                // resetting its client-side state
+                if (isClientConnected(other)) {
+                    player.addSessionLog(LoggerEventType.MODERATOR, 'Logged to world ' + Environment.NODE_ID + ' replacing session', other.client.uuid);
+                    other.logout();
+                    other.client.close();
+                }
+
+                if (other instanceof NetworkPlayer && player instanceof NetworkPlayer) {
+                    other.client = player.client;
+                    player.client.player = other;
+                    other.client.send(Uint8Array.from([15]));
+                }
+
+                rsbuf.cleanupPlayerBuildArea(other.pid);
+
+                other.onReconnect();
+
+                this.friendThread.postMessage({
+                    type: 'player_login',
+                    username: other.username,
+                    chatModePrivate: other.privateChat,
+                    staffLvl: other.staffModLevel
+                });
 
                 continue player;
             }
@@ -2241,7 +2238,7 @@ class World {
                 uid,
                 lowMemory,
                 reconnecting: client.opcode === 18,
-                hasSave: client.opcode === 18 ? typeof this.getPlayerByUsername(username) !== 'undefined' : false
+                hasSave: typeof this.getPlayerByUsername(username) !== 'undefined'
             });
         } else if (client.opcode === 15) {
             client.state = 2;

@@ -34,6 +34,8 @@ export default {
     NODE_AUTO_SUBSCRIBE_MEMBERS: tryParseBoolean(process.env.NODE_AUTO_SUBSCRIBE_MEMBERS, true),
     // addxp multiplier
     NODE_XPRATE: tryParseInt(process.env.NODE_XPRATE, 1),
+    // minutes with no client attached before a player is force-logged-out (default 1440 = 24h)
+    NODE_CLIENTLESS_TIMEOUT: tryParseInt(process.env.NODE_CLIENTLESS_TIMEOUT, 1440),
     // production mode!
     NODE_PRODUCTION: tryParseBoolean(process.env.NODE_PRODUCTION, false),
     NODE_SUBMIT_INPUT: tryParseBoolean(process.env.NODE_SUBMIT_INPUT, false),

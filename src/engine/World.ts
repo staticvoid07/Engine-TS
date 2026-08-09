@@ -1320,8 +1320,15 @@ class World {
     }
 
     private savePlayers(): void {
-        // would cause excessive save dialogs on webworker
-        if (typeof self !== 'undefined') {
+        // Skip autosaving only in a real browser web worker (the in-browser build), where writing
+        // saves would spam download dialogs.
+        //
+        // This used to test `typeof self !== 'undefined'`. Bun defines `self` as an alias for
+        // globalThis, so that guard matched on the server too and savePlayers() returned early every
+        // single time - autosave had never run once. The only remaining save was the flush on logout,
+        // which is why an unclean shutdown rolled players back to wherever they last logged out.
+        // WorkerGlobalScope is undefined under Bun and defined in a browser worker.
+        if (typeof WorkerGlobalScope !== 'undefined') {
             return;
         }
 

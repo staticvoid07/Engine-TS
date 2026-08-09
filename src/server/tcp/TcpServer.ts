@@ -45,7 +45,16 @@ export default class TcpServer {
 
                 if (client.player) {
                     client.player.addSessionLog(LoggerEventType.ENGINE, 'TCP socket closed');
-                    client.player.client = new NullClientSocket();
+
+                    // only detach if the player is still on THIS socket. a reconnect hands the
+                    // player its new socket before the old one finishes closing (close() delays
+                    // the real end by 1s), so an unconditional detach here would wipe the socket
+                    // that was just handed over and leave the player clientless in the world.
+                    if (client.player.client === client) {
+                        client.player.client = new NullClientSocket();
+                    }
+
+                    client.player = null;
                 }
             });
 

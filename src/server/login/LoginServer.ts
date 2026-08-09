@@ -165,7 +165,8 @@ export default class LoginServer {
                             .where('profile', '=', profile)
                             .execute();
                     } else if (type === 'player_login') {
-                        const { nodeMembers, replyTo, username, password, uid, socket, remoteAddress, hasSave } = msg;
+                        // note: msg.hasSave is deliberately ignored - see the reconnect branch below
+                        const { nodeMembers, replyTo, username, password, uid, socket, remoteAddress } = msg;
                         const safeName = toSafeName(username);
                         
                         if (this.loginRequests.has(safeName)) {
@@ -317,38 +318,34 @@ export default class LoginServer {
 
                                 const messageCount = await getUnreadMessageCount(account.id);
 
-                                if (!hasSave) {
-                                    const save = await fsp.readFile(`data/players/${profile}/${username}.sav`);
-                                    if (!save || !PlayerLoading.verify(new Packet(save))) {
-                                        // Extreme safety check for savefile existing but having bad data on read:
-                                        console.error('on reconnect, account_id %s had invalid save data on disk', account.id);
-                                        this.rejectLoginForSafety(s, replyTo);
-                                    }
-                                    s.send(
-                                        JSON.stringify({
-                                            replyTo,
-                                            response: 2,
-                                            account_id: account.id,
-                                            staffmodlevel: account.staffmodlevel,
-                                            muted_until: account.muted_until,
-                                            save: save.toString('base64'),
-                                            members: account.members,
-                                            messageCount
-                                        })
-                                    );
-                                } else {
-                                    s.send(
-                                        JSON.stringify({
-                                            replyTo,
-                                            response: 2,
-                                            account_id: account.id,
-                                            staffmodlevel: account.staffmodlevel,
-                                            muted_until: account.muted_until,
-                                            members: account.members,
-                                            messageCount
-                                        })
-                                    );
+                                // Always send the save, even when the world says it still has this
+                                // player in memory (hasSave). That flag is computed when the login
+                                // packet arrives, but the engine only acts on it a round trip later
+                                // in processLogins - and if the in-world session disappears in that
+                                // window (clientless timeout, logout, forced removal), the engine
+                                // falls back to `msg.save ?? new Uint8Array()`, which PlayerLoading
+                                // happily loads as a brand new level-3 character. That character
+                                // then overwrites the real one on the next save. Reading a couple
+                                // of KB off disk is not worth that risk.
+                                const save = await fsp.readFile(`data/players/${profile}/${username}.sav`);
+                                if (!save || !PlayerLoading.verify(new Packet(save))) {
+                                    // Extreme safety check for savefile existing but having bad data on read:
+                                    console.error('on reconnect, account_id %s had invalid save data on disk', account.id);
+                                    this.rejectLoginForSafety(s, replyTo);
+                                    return;
                                 }
+                                s.send(
+                                    JSON.stringify({
+                                        replyTo,
+                                        response: 2,
+                                        account_id: account.id,
+                                        staffmodlevel: account.staffmodlevel,
+                                        muted_until: account.muted_until,
+                                        save: save.toString('base64'),
+                                        members: account.members,
+                                        messageCount
+                                    })
+                                );
                                 return;
                             } else if (account.logged_in !== null && account.logged_in !== 0 && account.logged_in !== nodeId) {
                                 // already logged in elsewhere

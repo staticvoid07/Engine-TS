@@ -67,6 +67,7 @@ import UpdateFriendList from '#/network/game/server/model/UpdateFriendList.js';
 import UpdateIgnoreList from '#/network/game/server/model/UpdateIgnoreList.js';
 import UpdateRebootTimer from '#/network/game/server/model/UpdateRebootTimer.js';
 import ClientSocket from '#/server/ClientSocket.js';
+import NullClientSocket from '#/server/NullClientSocket.js';
 import { FriendsServerOpcodes } from '#/server/friend/FriendServer.js';
 import { FriendThreadMessage } from '#/server/friend/FriendThread.js';
 import { LoggerEventType } from '#/server/logger/LoggerEventType.js';
@@ -126,6 +127,7 @@ class World {
     private static readonly PLAYER_COORDLOGRATE: number = 50; // 30s
 
     private static readonly TIMEOUT_CLIENTLESS: number = Math.round((Environment.NODE_CLIENTLESS_TIMEOUT * 60000) / World.TICKRATE); // configurable, default 24h with no connection
+    private static readonly TIMEOUT_NO_RESPONSE: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 100; // 60s with an open socket but no packets from the client
 
     // the game/zones map
     readonly gameMap: GameMap;
@@ -786,6 +788,19 @@ class World {
                 // world shutdown: force logout
                 player.loggingOut = true;
                 force = true;
+            } else if (isClientConnected(player) && this.currentTick - player.lastResponse >= World.TIMEOUT_NO_RESPONSE) {
+                // the socket is still open but the client hasn't sent anything for 60s. the client sends
+                // NO_TIMEOUT every ~2.5s while idle, so this is a half-open connection the OS hasn't torn
+                // down yet (wifi drop, NAT rebind, laptop sleep). Detach it so the player goes clientless
+                // and a reconnect can hand them a fresh socket.
+                //
+                // Deliberately NOT a logout: detecting a dead socket and ending a session are different
+                // things, and conflating them is what the persistent-session design exists to avoid. The
+                // player stays in the world; TIMEOUT_CLIENTLESS below is what eventually ends the session.
+                player.addSessionLog(LoggerEventType.ENGINE, 'Client stopped responding, detaching socket');
+                player.client.terminate();
+                player.client = new NullClientSocket();
+                // lastConnected stops advancing from here, which starts the clientless clock
             } else if (this.currentTick - player.lastConnected >= World.TIMEOUT_CLIENTLESS) {
                 // no client attached for the configured timeout straight: force an immediate, unconditional logout.
                 // this is an idle game - a long-running/looping script must never permanently lock a player out
@@ -845,10 +860,10 @@ class World {
             if (this.logoutRequests.has(player.username)) {
                 player.addSessionLog(LoggerEventType.ENGINE, 'Tried to log in - old session is mid-logout');
 
-                if (isClientConnected(player)) {
-                    player.client.send(Uint8Array.from([5]));
-                    player.client.close();
-                }
+                // the login server already stamped logged_in=nodeId when it approved this login,
+                // so every rejection past that point has to hand the flag back - otherwise the
+                // account stays flagged as online here until the next world restart
+                this.forceLogout(player, 5);
 
                 continue;
             }
@@ -860,21 +875,26 @@ class World {
                     continue;
                 }
 
-                if (!player.reconnecting || !other.readyToLogout()) {
-                    // either a different client is taking over (not this same client process resuming its own
-                    // drop), or the old session is mid-combat/protected-script/long-queued action - either way,
-                    // don't hand off a live socket. Force an immediate, unconditional logout of the old session
-                    // (this is an idle game - a stuck/looping script must never block someone from logging back
-                    // into their own account) and have the new client retry once that completes with a normal
-                    // fresh login, rather than trying to live-swap state into a client that may not match it.
+                if (!player.reconnecting) {
+                    // a different client is taking over (not this same client process resuming its own drop),
+                    // so don't hand it a live socket - its client-side state doesn't match this session.
+                    // Force an immediate, unconditional logout of the old session (this is an idle game - a
+                    // stuck/looping script must never block someone from logging back into their own account)
+                    // and have the new client retry with a normal fresh login once that completes.
+                    //
+                    // NOTE: this is deliberately NOT gated on readyToLogout(). That check answers "is it safe
+                    // to end this session", which is the wrong question for a socket handoff - nothing is
+                    // ending on the reconnect path below, we're only swapping which socket the session writes
+                    // to. Gating on it meant a player who dropped mid-combat or mid-script (i.e. most of the
+                    // time in an idle game) got their session destroyed instead of resumed.
                     other.addSessionLog(LoggerEventType.MODERATOR, 'Forcing logout to allow login elsewhere');
                     this.removePlayer(other);
 
                     if (player instanceof NetworkPlayer) {
                         player.addSessionLog(LoggerEventType.ENGINE, 'Tried to log in - other session still active, forcing it to log out first');
-                        this.removePlayer(player);
-                        player.client.send(Uint8Array.from([5]));
-                        player.client.close();
+                        // removePlayer() is a no-op here (pid is still -1), so the login server's
+                        // logged_in=nodeId stamp has to be cleared explicitly
+                        this.forceLogout(player, 5);
                     }
 
                     continue player;

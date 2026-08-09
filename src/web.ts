@@ -184,7 +184,13 @@ export async function startWeb() {
 
                 if (client.player) {
                     client.player.addSessionLog(LoggerEventType.ENGINE, 'WS socket closed');
-                    client.player.client = new NullClientSocket();
+
+                    // only detach if the player is still on THIS socket - see TcpServer
+                    if (client.player.client === client) {
+                        client.player.client = new NullClientSocket();
+                    }
+
+                    client.player = null;
                 }
             }
         }

@@ -28,7 +28,12 @@ export default class WorkerServer {
                 case 'close': {
                     if (socket) {
                         if (socket.player) {
-                            socket.player.client = new NullClientSocket();
+                            // only detach if the player is still on THIS socket - see TcpServer
+                            if (socket.player.client === socket) {
+                                socket.player.client = new NullClientSocket();
+                            }
+
+                            socket.player = null;
                         }
                         this.sockets.delete(e.data.id);
                     }

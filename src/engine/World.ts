@@ -901,11 +901,13 @@ class World {
                         // the new client ran prepareGame() and wiped its world state, so it needs the full
                         // login reply - reply 15 is the reconnect reply and assumes the scene is already
                         // loaded, which would leave this client ingame with nothing rendered
-                        other.client.send(Uint8Array.from([
-                            2,
-                            Math.min(other.staffModLevel, 2),
-                            1 // mouse tracking can only be enabled on login
-                        ]));
+                        other.client.send(
+                            Uint8Array.from([
+                                2,
+                                Math.min(other.staffModLevel, 2),
+                                1 // mouse tracking can only be enabled on login
+                            ])
+                        );
 
                         // the new client may have different render settings than the one that dropped
                         other.lowMemory = player.lowMemory;
@@ -999,11 +1001,13 @@ class World {
 
                 player.client.state = 1;
 
-                player.client.send(Uint8Array.from([
-                    2,
-                    Math.min(player.staffModLevel, 2),
-                    1 // mouse tracking can only be enabled on login
-                ]));
+                player.client.send(
+                    Uint8Array.from([
+                        2,
+                        Math.min(player.staffModLevel, 2),
+                        1 // mouse tracking can only be enabled on login
+                    ])
+                );
             }
 
             // insert player into first available slot

@@ -411,9 +411,17 @@ export default class Player extends PathingEntity {
 
     constructor(username: string, username37: bigint, hash64: bigint) {
         super(
-            0, 3094, 3106, // tutorial island
-            1, 1,
-            EntityLifeCycle.FOREVER, MoveRestrict.NORMAL, BlockWalk.NPC, MoveStrategy.SMART, PlayerInfoProt.FACE_COORD, PlayerInfoProt.FACE_ENTITY
+            0,
+            3094,
+            3106, // tutorial island
+            1,
+            1,
+            EntityLifeCycle.FOREVER,
+            MoveRestrict.NORMAL,
+            BlockWalk.NPC,
+            MoveStrategy.SMART,
+            PlayerInfoProt.FACE_COORD,
+            PlayerInfoProt.FACE_ENTITY
         );
 
         this.username = username;
@@ -1805,7 +1813,7 @@ export default class Player extends PathingEntity {
         const { basevar, startbit, endbit } = varbit;
         const mask = Packet.bitmask[endbit - startbit + 1];
 
-        return this.vars[basevar] >> startbit & mask;
+        return (this.vars[basevar] >> startbit) & mask;
     }
 
     setVarBit(id: number, value: number) {
@@ -1822,7 +1830,7 @@ export default class Player extends PathingEntity {
         }
 
         mask <<= startbit;
-        this.setVar(basevar, mask & value << startbit | this.vars[basevar] & ~mask);
+        this.setVar(basevar, (mask & (value << startbit)) | (this.vars[basevar] & ~mask));
     }
 
     private writeVarp(id: number, value: number): void {
@@ -2004,7 +2012,12 @@ export default class Player extends PathingEntity {
     // todo: make compiler do this at pack time
     playSong(name: string) {
         // todo: don't rely on MidiPack (server should be runnable using only packed content)
-        const id = MidiPack.getByName(name.toLowerCase().replaceAll(' ', '_').replace(/[^a-z0-9_-]/g, ''));
+        const id = MidiPack.getByName(
+            name
+                .toLowerCase()
+                .replaceAll(' ', '_')
+                .replace(/[^a-z0-9_-]/g, '')
+        );
         if (id !== -1) {
             this.write(new MidiSong(id));
         }

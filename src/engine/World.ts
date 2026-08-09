@@ -916,6 +916,12 @@ class World {
 
                         other.onTakeover();
 
+                        // checkpoint the character at the handover. Fixes 2 and 5 removed the implicit
+                        // save that used to happen here as a side effect of the old code destroying the
+                        // session, so without this the only save points left are the 15 minute autosave,
+                        // a real logout and the clientless timeout.
+                        this.autosavePlayer(other);
+
                         this.friendThread.postMessage({
                             type: 'player_login',
                             username: other.username,
@@ -957,6 +963,10 @@ class World {
                 rsbuf.cleanupPlayerBuildArea(other.pid);
 
                 other.onReconnect();
+
+                // same checkpoint as the takeover path above - a client transition is a natural save
+                // point, and the one that used to happen here incidentally is gone
+                this.autosavePlayer(other);
 
                 this.friendThread.postMessage({
                     type: 'player_login',
@@ -2423,6 +2433,20 @@ class World {
         this.logoutRequests.set(player.username, {
             save,
             lastAttempt: -1
+        });
+    }
+
+    // Write a player's save to disk without touching any session state.
+    //
+    // flushPlayer() must NOT be used for this: it queues a logoutRequest, which rejects any further
+    // login for that username while it is pending and ends with logged_in being cleared. That is
+    // correct when a session is ending and actively wrong when it is continuing - on a takeover it
+    // would reject the very login that just succeeded.
+    autosavePlayer(player: Player) {
+        this.loginThread.postMessage({
+            type: 'player_autosave',
+            username: player.username,
+            save: player.save()
         });
     }
 }

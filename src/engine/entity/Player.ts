@@ -599,6 +599,15 @@ export default class Player extends PathingEntity {
         this.write(new IfClose());
         this.write(new UpdateUid192(this.pid, this.members));
 
+        // The new client wiped players[], localPlayer and playerAppearanceBuffer[] when it processed
+        // login reply 2, but nothing told rsbuf that - it still believes this session's appearance has
+        // already been delivered, so it sends no appearance block and the character renders with no
+        // model at all. Marking the appearance dirty bumps lastAppearance to the current tick, which
+        // forces it back out to every observer including this client.
+        //
+        // The reconnect path does not need this: reply 15 leaves the client's caches intact.
+        this.buildAppearance(InvType.WORN);
+
         this.onReconnect();
     }
 

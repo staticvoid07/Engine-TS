@@ -868,25 +868,63 @@ class World {
                 continue;
             }
 
-            // a login for a username already active in this world always wins over the existing session: a
-            // genuine same-client reconnect resumes in place, anything else forces a real logout first (below)
+            // a login for a username already active in this world always wins over the existing session,
+            // and never destroys it: a same-client reconnect (opcode 18) resumes in place, a login from
+            // anywhere else (opcode 16) takes the running session over onto the new client
             for (const other of this.players) {
                 if (player.username !== other.username) {
                     continue;
                 }
 
                 if (!player.reconnecting) {
-                    // a different client is taking over (not this same client process resuming its own drop),
-                    // so don't hand it a live socket - its client-side state doesn't match this session.
-                    // Force an immediate, unconditional logout of the old session (this is an idle game - a
-                    // stuck/looping script must never block someone from logging back into their own account)
-                    // and have the new client retry with a normal fresh login once that completes.
+                    // a login from somewhere else for a username already live in this world. Hand the
+                    // running session over to the new client rather than destroying it - the whole point
+                    // of persistent sessions is that the character keeps going, so taking control from a
+                    // second machine must not cost the player their in-flight session.
                     //
-                    // NOTE: this is deliberately NOT gated on readyToLogout(). That check answers "is it safe
-                    // to end this session", which is the wrong question for a socket handoff - nothing is
-                    // ending on the reconnect path below, we're only swapping which socket the session writes
-                    // to. Gating on it meant a player who dropped mid-combat or mid-script (i.e. most of the
-                    // time in an idle game) got their session destroyed instead of resumed.
+                    // Only possible when both sides own a real socket; a headless/scripted session has
+                    // nothing to hand over, so that still falls back to a forced logout.
+                    if (other instanceof NetworkPlayer && player instanceof NetworkPlayer) {
+                        other.addSessionLog(LoggerEventType.MODERATOR, 'Session taken over by a new login', player.client.uuid);
+                        player.addSessionLog(LoggerEventType.ENGINE, 'Taking over the existing session for this account');
+
+                        // drop the client that was holding the session before, if it is still there
+                        if (isClientConnected(other)) {
+                            other.logout();
+                            other.client.close();
+                        }
+
+                        other.client = player.client;
+                        player.client.player = other;
+                        other.client.state = 1;
+
+                        // the new client ran prepareGame() and wiped its world state, so it needs the full
+                        // login reply - reply 15 is the reconnect reply and assumes the scene is already
+                        // loaded, which would leave this client ingame with nothing rendered
+                        other.client.send(Uint8Array.from([
+                            2,
+                            Math.min(other.staffModLevel, 2),
+                            1 // mouse tracking can only be enabled on login
+                        ]));
+
+                        // the new client may have different render settings than the one that dropped
+                        other.lowMemory = player.lowMemory;
+
+                        rsbuf.cleanupPlayerBuildArea(other.pid);
+
+                        other.onTakeover();
+
+                        this.friendThread.postMessage({
+                            type: 'player_login',
+                            username: other.username,
+                            chatModePrivate: other.privateChat,
+                            staffLvl: other.staffModLevel
+                        });
+
+                        continue player;
+                    }
+
+                    // no socket to hand over - end the old session and make the new client retry
                     other.addSessionLog(LoggerEventType.MODERATOR, 'Forcing logout to allow login elsewhere');
                     this.removePlayer(other);
 

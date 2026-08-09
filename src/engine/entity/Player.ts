@@ -566,6 +566,34 @@ export default class Player extends PathingEntity {
         this.jump = true;
     }
 
+    // resync a live in-world session onto a brand new client - a login from somewhere else
+    // (opcode 16), as opposed to the same client process resuming its own drop (opcode 18).
+    //
+    // The new client has run prepareGame() and reset its world state, so it needs the parts of
+    // onLogin() it has never received; onReconnect() covers the rest (varps, tabs, invs, stats,
+    // scene rebuild) from engine-side state.
+    //
+    // Deliberately does NOT run the LOGIN trigger. That script is not idempotent: it re-registers
+    // the stat/health regen timers, re-queues the follower, restores skull/poison/antifire state,
+    // can relocate the player out of a duel, gnomeball game or trawler ship, and can jump an
+    // unfinished account back into the tutorial. Fine when a session is genuinely starting;
+    // corrupting when it never ended.
+    onTakeover() {
+        this.write(new ChatFilterSettings(this.publicChat, this.privateChat, this.tradeDuel));
+
+        if (Environment.FRIEND_SERVER) {
+            this.write(new FriendlistLoaded(1));
+        } else {
+            this.write(new FriendlistLoaded(2));
+            this.write(new UpdateIgnoreList([]));
+        }
+
+        this.write(new IfClose());
+        this.write(new UpdateUid192(this.pid, this.members));
+
+        this.onReconnect();
+    }
+
     triggerMapzone(x: number, z: number) {
         // todo: getByTrigger needs more bits to lookup by coord
         const trigger = ScriptProvider.getByName(`[mapzone,0_${x >> 6}_${z >> 6}]`);

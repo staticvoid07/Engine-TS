@@ -21,7 +21,11 @@ export class LoginClient extends InternalClient {
             JSON.stringify({
                 type: 'world_startup',
                 nodeId: this.nodeId,
-                nodeTime: Date.now()
+                nodeTime: Date.now(),
+                // without this the login server's startup cleanup runs
+                // `where profile = undefined` and clears nothing, so accounts left flagged
+                // logged_in by a crash or a rejected login stay flagged forever
+                profile: Environment.NODE_PROFILE
             })
         );
     }

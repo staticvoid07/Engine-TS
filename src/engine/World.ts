@@ -67,6 +67,7 @@ import UpdateFriendList from '#/network/game/server/model/UpdateFriendList.js';
 import UpdateIgnoreList from '#/network/game/server/model/UpdateIgnoreList.js';
 import UpdateRebootTimer from '#/network/game/server/model/UpdateRebootTimer.js';
 import ClientSocket from '#/server/ClientSocket.js';
+import NullClientSocket from '#/server/NullClientSocket.js';
 import { FriendsServerOpcodes } from '#/server/friend/FriendServer.js';
 import { FriendThreadMessage } from '#/server/friend/FriendThread.js';
 import { LoggerEventType } from '#/server/logger/LoggerEventType.js';
@@ -126,6 +127,7 @@ class World {
     private static readonly PLAYER_COORDLOGRATE: number = 50; // 30s
 
     private static readonly TIMEOUT_CLIENTLESS: number = Math.round((Environment.NODE_CLIENTLESS_TIMEOUT * 60000) / World.TICKRATE); // configurable, default 24h with no connection
+    private static readonly TIMEOUT_NO_RESPONSE: number = Environment.NODE_DEBUG_SOCKET ? 60000 : 100; // 60s with an open socket but no packets from the client
 
     // the game/zones map
     readonly gameMap: GameMap;
@@ -786,6 +788,19 @@ class World {
                 // world shutdown: force logout
                 player.loggingOut = true;
                 force = true;
+            } else if (isClientConnected(player) && this.currentTick - player.lastResponse >= World.TIMEOUT_NO_RESPONSE) {
+                // the socket is still open but the client hasn't sent anything for 60s. the client sends
+                // NO_TIMEOUT every ~2.5s while idle, so this is a half-open connection the OS hasn't torn
+                // down yet (wifi drop, NAT rebind, laptop sleep). Detach it so the player goes clientless
+                // and a reconnect can hand them a fresh socket.
+                //
+                // Deliberately NOT a logout: detecting a dead socket and ending a session are different
+                // things, and conflating them is what the persistent-session design exists to avoid. The
+                // player stays in the world; TIMEOUT_CLIENTLESS below is what eventually ends the session.
+                player.addSessionLog(LoggerEventType.ENGINE, 'Client stopped responding, detaching socket');
+                player.client.terminate();
+                player.client = new NullClientSocket();
+                // lastConnected stops advancing from here, which starts the clientless clock
             } else if (this.currentTick - player.lastConnected >= World.TIMEOUT_CLIENTLESS) {
                 // no client attached for the configured timeout straight: force an immediate, unconditional logout.
                 // this is an idle game - a long-running/looping script must never permanently lock a player out
@@ -845,36 +860,87 @@ class World {
             if (this.logoutRequests.has(player.username)) {
                 player.addSessionLog(LoggerEventType.ENGINE, 'Tried to log in - old session is mid-logout');
 
-                if (isClientConnected(player)) {
-                    player.client.send(Uint8Array.from([5]));
-                    player.client.close();
-                }
+                // the login server already stamped logged_in=nodeId when it approved this login,
+                // so every rejection past that point has to hand the flag back - otherwise the
+                // account stays flagged as online here until the next world restart
+                this.forceLogout(player, 5);
 
                 continue;
             }
 
-            // a login for a username already active in this world always wins over the existing session: a
-            // genuine same-client reconnect resumes in place, anything else forces a real logout first (below)
+            // a login for a username already active in this world always wins over the existing session,
+            // and never destroys it: a same-client reconnect (opcode 18) resumes in place, a login from
+            // anywhere else (opcode 16) takes the running session over onto the new client
             for (const other of this.players) {
                 if (player.username !== other.username) {
                     continue;
                 }
 
-                if (!player.reconnecting || !other.readyToLogout()) {
-                    // either a different client is taking over (not this same client process resuming its own
-                    // drop), or the old session is mid-combat/protected-script/long-queued action - either way,
-                    // don't hand off a live socket. Force an immediate, unconditional logout of the old session
-                    // (this is an idle game - a stuck/looping script must never block someone from logging back
-                    // into their own account) and have the new client retry once that completes with a normal
-                    // fresh login, rather than trying to live-swap state into a client that may not match it.
+                if (!player.reconnecting) {
+                    // a login from somewhere else for a username already live in this world. Hand the
+                    // running session over to the new client rather than destroying it - the whole point
+                    // of persistent sessions is that the character keeps going, so taking control from a
+                    // second machine must not cost the player their in-flight session.
+                    //
+                    // Only possible when both sides own a real socket; a headless/scripted session has
+                    // nothing to hand over, so that still falls back to a forced logout.
+                    if (other instanceof NetworkPlayer && player instanceof NetworkPlayer) {
+                        other.addSessionLog(LoggerEventType.MODERATOR, 'Session taken over by a new login', player.client.uuid);
+                        player.addSessionLog(LoggerEventType.ENGINE, 'Taking over the existing session for this account');
+
+                        // drop the client that was holding the session before, if it is still there
+                        if (isClientConnected(other)) {
+                            other.logout();
+                            other.client.close();
+                        }
+
+                        other.client = player.client;
+                        player.client.player = other;
+                        other.client.state = 1;
+
+                        // the new client ran prepareGame() and wiped its world state, so it needs the full
+                        // login reply - reply 15 is the reconnect reply and assumes the scene is already
+                        // loaded, which would leave this client ingame with nothing rendered
+                        other.client.send(
+                            Uint8Array.from([
+                                2,
+                                Math.min(other.staffModLevel, 2),
+                                1 // mouse tracking can only be enabled on login
+                            ])
+                        );
+
+                        // the new client may have different render settings than the one that dropped
+                        other.lowMemory = player.lowMemory;
+
+                        rsbuf.cleanupPlayerBuildArea(other.pid);
+
+                        other.onTakeover();
+
+                        // checkpoint the character at the handover. Fixes 2 and 5 removed the implicit
+                        // save that used to happen here as a side effect of the old code destroying the
+                        // session, so without this the only save points left are the 15 minute autosave,
+                        // a real logout and the clientless timeout.
+                        this.autosavePlayer(other);
+
+                        this.friendThread.postMessage({
+                            type: 'player_login',
+                            username: other.username,
+                            chatModePrivate: other.privateChat,
+                            staffLvl: other.staffModLevel
+                        });
+
+                        continue player;
+                    }
+
+                    // no socket to hand over - end the old session and make the new client retry
                     other.addSessionLog(LoggerEventType.MODERATOR, 'Forcing logout to allow login elsewhere');
                     this.removePlayer(other);
 
                     if (player instanceof NetworkPlayer) {
                         player.addSessionLog(LoggerEventType.ENGINE, 'Tried to log in - other session still active, forcing it to log out first');
-                        this.removePlayer(player);
-                        player.client.send(Uint8Array.from([5]));
-                        player.client.close();
+                        // removePlayer() is a no-op here (pid is still -1), so the login server's
+                        // logged_in=nodeId stamp has to be cleared explicitly
+                        this.forceLogout(player, 5);
                     }
 
                     continue player;
@@ -897,6 +963,10 @@ class World {
                 rsbuf.cleanupPlayerBuildArea(other.pid);
 
                 other.onReconnect();
+
+                // same checkpoint as the takeover path above - a client transition is a natural save
+                // point, and the one that used to happen here incidentally is gone
+                this.autosavePlayer(other);
 
                 this.friendThread.postMessage({
                     type: 'player_login',
@@ -941,11 +1011,13 @@ class World {
 
                 player.client.state = 1;
 
-                player.client.send(Uint8Array.from([
-                    2,
-                    Math.min(player.staffModLevel, 2),
-                    1 // mouse tracking can only be enabled on login
-                ]));
+                player.client.send(
+                    Uint8Array.from([
+                        2,
+                        Math.min(player.staffModLevel, 2),
+                        1 // mouse tracking can only be enabled on login
+                    ])
+                );
             }
 
             // insert player into first available slot
@@ -1248,8 +1320,15 @@ class World {
     }
 
     private savePlayers(): void {
-        // would cause excessive save dialogs on webworker
-        if (typeof self !== 'undefined') {
+        // Skip autosaving only in a real browser web worker (the in-browser build), where writing
+        // saves would spam download dialogs.
+        //
+        // This used to test `typeof self !== 'undefined'`. Bun defines `self` as an alias for
+        // globalThis, so that guard matched on the server too and savePlayers() returned early every
+        // single time - autosave had never run once. The only remaining save was the flush on logout,
+        // which is why an unclean shutdown rolled players back to wherever they last logged out.
+        // WorkerGlobalScope is undefined under Bun and defined in a browser worker.
+        if (typeof WorkerGlobalScope !== 'undefined') {
             return;
         }
 
@@ -2361,6 +2440,20 @@ class World {
         this.logoutRequests.set(player.username, {
             save,
             lastAttempt: -1
+        });
+    }
+
+    // Write a player's save to disk without touching any session state.
+    //
+    // flushPlayer() must NOT be used for this: it queues a logoutRequest, which rejects any further
+    // login for that username while it is pending and ends with logged_in being cleared. That is
+    // correct when a session is ending and actively wrong when it is continuing - on a takeover it
+    // would reject the very login that just succeeded.
+    autosavePlayer(player: Player) {
+        this.loginThread.postMessage({
+            type: 'player_autosave',
+            username: player.username,
+            save: player.save()
         });
     }
 }

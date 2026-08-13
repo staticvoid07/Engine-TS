@@ -33,12 +33,12 @@ MIME_TYPES.set('.wasm', 'application/wasm');
 MIME_TYPES.set('.sf2', 'application/octet-stream');
 
 export type WebSocketData = {
-    client: WSClientSocket,
-    remoteAddress: string
+    client: WSClientSocket;
+    remoteAddress: string;
 };
 
 export type WebSocketRoutes = {
-    '/': Response
+    '/': Response;
 };
 
 export async function startWeb() {
@@ -87,27 +87,33 @@ export async function startWeb() {
                 const lowmem = tryParseInt(url.searchParams.get('lowmem'), 0);
 
                 if (Environment.NODE_DEBUG && plugin === 1) {
-                    return new Response(await ejs.renderFile('view/java.ejs', {
-                        nodeid: Environment.NODE_ID,
-                        lowmem,
-                        members: Environment.NODE_MEMBERS,
-                        portoff: Environment.NODE_PORT - 43594
-                    }), {
-                        headers: {
-                            'Content-Type': 'text/html'
+                    return new Response(
+                        await ejs.renderFile('view/java.ejs', {
+                            nodeid: Environment.NODE_ID,
+                            lowmem,
+                            members: Environment.NODE_MEMBERS,
+                            portoff: Environment.NODE_PORT - 43594
+                        }),
+                        {
+                            headers: {
+                                'Content-Type': 'text/html'
+                            }
                         }
-                    });
+                    );
                 } else {
-                    return new Response(await ejs.renderFile('view/client.ejs', {
-                        nodeid: Environment.NODE_ID,
-                        lowmem,
-                        members: Environment.NODE_MEMBERS,
-                        per_deployment_token: Environment.WEB_SOCKET_TOKEN_PROTECTION ? getPublicPerDeploymentToken() : ''
-                    }), {
-                        headers: {
-                            'Content-Type': 'text/html'
+                    return new Response(
+                        await ejs.renderFile('view/client.ejs', {
+                            nodeid: Environment.NODE_ID,
+                            lowmem,
+                            members: Environment.NODE_MEMBERS,
+                            per_deployment_token: Environment.WEB_SOCKET_TOKEN_PROTECTION ? getPublicPerDeploymentToken() : ''
+                        }),
+                        {
+                            headers: {
+                                'Content-Type': 'text/html'
+                            }
                         }
-                    });
+                    );
                 }
             } else if (fs.existsSync(`public${url.pathname}`)) {
                 return new Response(Bun.file(`public${url.pathname}`), {
@@ -184,7 +190,13 @@ export async function startWeb() {
 
                 if (client.player) {
                     client.player.addSessionLog(LoggerEventType.ENGINE, 'WS socket closed');
-                    client.player.client = new NullClientSocket();
+
+                    // only detach if the player is still on THIS socket - see TcpServer
+                    if (client.player.client === client) {
+                        client.player.client = new NullClientSocket();
+                    }
+
+                    client.player = null;
                 }
             }
         }
@@ -203,6 +215,6 @@ export async function startManagementWeb() {
         },
         fetch() {
             return new Response(null, { status: 404 });
-        },
+        }
     });
 }

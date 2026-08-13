@@ -411,9 +411,17 @@ export default class Player extends PathingEntity {
 
     constructor(username: string, username37: bigint, hash64: bigint) {
         super(
-            0, 3094, 3106, // tutorial island
-            1, 1,
-            EntityLifeCycle.FOREVER, MoveRestrict.NORMAL, BlockWalk.NPC, MoveStrategy.SMART, PlayerInfoProt.FACE_COORD, PlayerInfoProt.FACE_ENTITY
+            0,
+            3094,
+            3106, // tutorial island
+            1,
+            1,
+            EntityLifeCycle.FOREVER,
+            MoveRestrict.NORMAL,
+            BlockWalk.NPC,
+            MoveStrategy.SMART,
+            PlayerInfoProt.FACE_COORD,
+            PlayerInfoProt.FACE_ENTITY
         );
 
         this.username = username;
@@ -564,6 +572,43 @@ export default class Player extends PathingEntity {
         this.moveSpeed = MoveSpeed.INSTANT;
         this.tele = true;
         this.jump = true;
+    }
+
+    // resync a live in-world session onto a brand new client - a login from somewhere else
+    // (opcode 16), as opposed to the same client process resuming its own drop (opcode 18).
+    //
+    // The new client has run prepareGame() and reset its world state, so it needs the parts of
+    // onLogin() it has never received; onReconnect() covers the rest (varps, tabs, invs, stats,
+    // scene rebuild) from engine-side state.
+    //
+    // Deliberately does NOT run the LOGIN trigger. That script is not idempotent: it re-registers
+    // the stat/health regen timers, re-queues the follower, restores skull/poison/antifire state,
+    // can relocate the player out of a duel, gnomeball game or trawler ship, and can jump an
+    // unfinished account back into the tutorial. Fine when a session is genuinely starting;
+    // corrupting when it never ended.
+    onTakeover() {
+        this.write(new ChatFilterSettings(this.publicChat, this.privateChat, this.tradeDuel));
+
+        if (Environment.FRIEND_SERVER) {
+            this.write(new FriendlistLoaded(1));
+        } else {
+            this.write(new FriendlistLoaded(2));
+            this.write(new UpdateIgnoreList([]));
+        }
+
+        this.write(new IfClose());
+        this.write(new UpdateUid192(this.pid, this.members));
+
+        // The new client wiped players[], localPlayer and playerAppearanceBuffer[] when it processed
+        // login reply 2, but nothing told rsbuf that - it still believes this session's appearance has
+        // already been delivered, so it sends no appearance block and the character renders with no
+        // model at all. Marking the appearance dirty bumps lastAppearance to the current tick, which
+        // forces it back out to every observer including this client.
+        //
+        // The reconnect path does not need this: reply 15 leaves the client's caches intact.
+        this.buildAppearance(InvType.WORN);
+
+        this.onReconnect();
     }
 
     triggerMapzone(x: number, z: number) {
@@ -1777,7 +1822,7 @@ export default class Player extends PathingEntity {
         const { basevar, startbit, endbit } = varbit;
         const mask = Packet.bitmask[endbit - startbit + 1];
 
-        return this.vars[basevar] >> startbit & mask;
+        return (this.vars[basevar] >> startbit) & mask;
     }
 
     setVarBit(id: number, value: number) {
@@ -1794,7 +1839,7 @@ export default class Player extends PathingEntity {
         }
 
         mask <<= startbit;
-        this.setVar(basevar, mask & value << startbit | this.vars[basevar] & ~mask);
+        this.setVar(basevar, (mask & (value << startbit)) | (this.vars[basevar] & ~mask));
     }
 
     private writeVarp(id: number, value: number): void {
@@ -1976,7 +2021,12 @@ export default class Player extends PathingEntity {
     // todo: make compiler do this at pack time
     playSong(name: string) {
         // todo: don't rely on MidiPack (server should be runnable using only packed content)
-        const id = MidiPack.getByName(name.toLowerCase().replaceAll(' ', '_').replace(/[^a-z0-9_-]/g, ''));
+        const id = MidiPack.getByName(
+            name
+                .toLowerCase()
+                .replaceAll(' ', '_')
+                .replace(/[^a-z0-9_-]/g, '')
+        );
         if (id !== -1) {
             this.write(new MidiSong(id));
         }
